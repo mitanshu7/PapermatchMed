@@ -4,17 +4,19 @@ from pymilvus import MilvusClient, DataType
 import requests
 from time import sleep
 from glob import glob
+import os
 
 ################################################################################
 # Download vector dataset
 # https://huggingface.co/docs/huggingface_hub/v0.24.6/en/package_reference/file_download#huggingface_hub.snapshot_download
 
 # Setup transaction details
-repo_id = "bluuebunny/arxiv_abstract_embedding_mxbai_large_v1_milvus"
-# repo_id = "bluuebunny/tmp"
+repo_id = "bluuebunny/medrxiv_abstract_embedding_mxbai_large_v1_milvus"
 repo_type = "dataset"
-local_dir = "volumes/milvus"
 allow_patterns = "*.parquet"
+
+local_dir = "volumes/milvus"
+os.makedirs(local_dir, exist_ok=True)
 
 # Download the repo
 snapshot_download(repo_id=repo_id, repo_type=repo_type, local_dir=local_dir, allow_patterns=allow_patterns)
@@ -29,7 +31,7 @@ client = MilvusClient("http://localhost:19530")
 # Need to drop it because otherwise milvus does not check for (and keeps)
 # duplicate records
 client.drop_collection(
-    collection_name="arxiv_abstracts"
+    collection_name="medrxiv_abstracts"
 )
 
 # Dataset schema
@@ -46,7 +48,7 @@ print("Issues with scheme: ", schema.verify())
 
 # Create a collection
 client.create_collection(
-    collection_name="arxiv_abstracts",
+    collection_name="medrxiv_abstracts",
     schema=schema
 )
 
@@ -69,7 +71,7 @@ headers = {
 # Define the data payload
 job_url_data = {
     "files": files,
-    "collectionName": "arxiv_abstracts"
+    "collectionName": "medrxiv_abstracts"
 }
 
 # Make the POST request
@@ -148,7 +150,7 @@ print("Creating Index file.")
 
 # Create an index file
 res = client.create_index(
-    collection_name="arxiv_abstracts",
+    collection_name="medrxiv_abstracts",
     index_params=index_params,
     sync=True # Wait for index creation to complete before returning. 
 )
@@ -159,7 +161,7 @@ print("Listing indexes.")
 
 # List indexes
 res = client.list_indexes(
-    collection_name="arxiv_abstracts"
+    collection_name="medrxiv_abstracts"
 )
 
 print(res)
@@ -168,7 +170,7 @@ print("Describing Index.")
 
 # Describe index
 res = client.describe_index(
-    collection_name="arxiv_abstracts",
+    collection_name="medrxiv_abstracts",
     index_name="vector_index"
 )
 
@@ -181,12 +183,12 @@ print(res)
 print("Loading Collection")
 
 client.load_collection(
-    collection_name="arxiv_abstracts",
+    collection_name="medrxiv_abstracts",
     replica_number=1 # Number of replicas to create on query nodes. 
 )
 
 res = client.get_load_state(
-    collection_name="arxiv_abstracts"
+    collection_name="medrxiv_abstracts"
 )
 
 print("Collection load state:")

@@ -2,7 +2,7 @@
 import gradio as gr
 from pymilvus import MilvusClient
 import numpy as np
-import arxiv
+import requests
 from mixedbread_ai.client import MixedbreadAI
 from dotenv import dotenv_values
 import re
@@ -15,9 +15,6 @@ import pandas as pd
 # Define Milvus client
 milvus_client = MilvusClient("http://localhost:19530")
 
-# Construct the Arxiv API client.
-arxiv_client = arxiv.Client(page_size=1, delay_seconds=1)
-
 # Import secrets
 config = dotenv_values(".env")
 
@@ -27,22 +24,35 @@ mxbai = MixedbreadAI(api_key=mxbai_api_key)
 
 ################################################################################
 
-# Function to search ArXiv by ID
+# Function to search MedRiv by DOI
 @cache
-def fetch_arxiv_by_id(arxiv_id):
+def fetch_medrxiv_by_id(doi):
 
-    search = arxiv.Search(id_list=[arxiv_id])
+    # Define the base URL for the medRxiv API
+    base_url = "https://api.medrxiv.org/details/medrxiv/"
 
-    paper = next(arxiv_client.results(search), None)
+    # Construct the full URL for the API request
+    url = f"{base_url}{doi}"
 
-    if paper:
+    # Send the API request
+    response = requests.get(url)
+
+    # Check if the request was successful
+    if response.status_code == 200:
+        # Parse the JSON response
+        data = response.json()
+        # Extract the abstract from the response data
+        # abstract = data["abstract"]
         return {
-            "Title": paper.title,
-            "Authors": ", ".join([str(author) for author in paper.authors]),
-            "Abstract": paper.summary,
-            "URL": paper.pdf_url
+            "Title": data['collection'][0]['title'],
+            "Authors": data['collection'][0]['authors'],
+            "Abstract": data['collection'][0]['abstract'],
+            "URL": f"https://doi.org/{doi}"
         }
-    return "No paper found."
+    else:
+        # Print an error message if the request was not successful
+        print(f"Error: {response.status_code}")
+        return None
 
 ################################################################################
 # Function to embed text
@@ -67,7 +77,7 @@ def embed(text):
 def search(vector, limit):
 
     result = milvus_client.search(
-        collection_name="arxiv_abstracts", # Replace with the actual name of your collection
+        collection_name="medrxiv_abstracts", # Replace with the actual name of your collection
         # Replace with your query vector
         data=[vector],
         limit=limit, # Max. number of search results to return
@@ -86,7 +96,7 @@ def fetch_all_details(search_results):
 
     for search_result in search_results:
 
-        paper_details = fetch_arxiv_by_id(search_result['id'])
+        paper_details = fetch_medrxiv_by_id(search_result['id'])
 
         paper_details['Similarity Score'] = np.round(search_result['distance']*100, 2)
 
@@ -120,11 +130,11 @@ def parse_output(data):
 @cache
 def predict(input_type, input_text, limit):
 
-    # When input is arxiv id
-    if input_type == "ArXiv ID":
+    # When input is MedRxiv id
+    if input_type == "MedRxiv DOI":
 
         # Search if id is already in database
-        id_in_db = milvus_client.get(collection_name="arxiv_abstracts",ids=[input_text])
+        id_in_db = milvus_client.get(collection_name="medrxiv_abstracts",ids=[input_text])
 
         # If the id is already in database
         if bool(id_in_db):
@@ -134,11 +144,11 @@ def predict(input_type, input_text, limit):
 
         else:
 
-            # Search arxiv for paper details
-            arxiv_json = fetch_arxiv_by_id(input_text)
+            # Search MedRxiv for paper details
+            medrxiv_json = fetch_medrxiv_by_id(input_text)
 
             # Embed abstract
-            abstract_vector = embed(arxiv_json['Abstract'])
+            abstract_vector = embed(medrxiv_json['Abstract'])
 
         # Search database
         search_results = search(abstract_vector, limit)
@@ -164,7 +174,7 @@ def predict(input_type, input_text, limit):
         return df
 
     else:
-        return "Please provide either an ArXiv ID or an abstract."
+        return "Please provide either an MedRxiv DOI or an abstract."
             
 
 contact_text = """
@@ -178,9 +188,8 @@ contact_text = """
 """
 
 examples = [
-    ["ArXiv ID", "2401.07215"],
-    ["Abstract or Description", "Game theory applications in marine biology"],
-    ["Abstract or Description", "The modern coffee market aims to provide products which are both consistent and have desirable flavour characteristics. Espresso, one of the most widely consumed coffee beverage formats, is also the most susceptible to variation in quality. Yet, the origin of this inconsistency has traditionally, and incorrectly, been attributed to human variations. This study's mathematical model, paired with experiment, has elucidated that the grinder and water pressure play pivotal roles in achieving beverage reproducibility. We suggest novel brewing protocols that not only reduce beverage variation but also decrease the mass of coffee used per espresso by up to 25%. If widely implemented, this protocol will have significant economic impact and create a more sustainable coffee-consuming future."]
+    ["MedRxiv DOI", "10.1101/2019.12.08.19013979"],
+    ["Abstract or Description", "Game theory applications in biology"],
 ]
 
 ################################################################################
@@ -188,21 +197,21 @@ examples = [
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
 
     # Title and description
-    gr.Markdown("# PaperMatch: Discover Related Research Papers")
-    gr.Markdown("## Enter either an [ArXiv ID](https://info.arxiv.org/help/arxiv_identifier.html) or paste an abstract to explore papers based on semantic similarity.")
-    gr.Markdown("### _ArXiv Database last updated: August 2024_")
+    gr.Markdown("# PaperMatchMed: Discover Related Research Papers")
+    gr.Markdown("## Enter either a MedRxiv DOI or paste an abstract to explore papers based on semantic similarity.")
+    gr.Markdown("### _MedRiv Database last updated: September 2024_")
     
     # Input Section
     with gr.Row():
         input_type = gr.Dropdown(
-            choices=["ArXiv ID", "Abstract or Description"],
+            choices=["MedRxiv DOI", "Abstract or Description"],
             label="Input Type",
-            value="ArXiv ID",
+            value="MedRxiv DOI",
             interactive=True,
         )
         id_or_text_input = gr.Textbox(
-            label="Enter ArXiv ID or Abstract", 
-            placeholder="e.g., 1706.03762 or an abstract...",
+            label="Enter MedRiv DOI or Abstract", 
+            placeholder="e.g., 10.1101/19013474 or an abstract...",
         )
     
     # Example inputs
@@ -231,7 +240,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 
     # Attribution
     gr.Markdown(contact_text)
-    gr.Markdown("_Thanks to [ArXiv](https://arxiv.org) for their open access interoperability._")
+    gr.Markdown("_Thanks to [MedRiv](https://medrxiv.org) for their open access interoperability._")
 
     # Link button click to the prediction function
     submit_btn.click(predict, [input_type, id_or_text_input, slider_input], output)
