@@ -28,6 +28,23 @@ mxbai = MixedbreadAI(api_key=mxbai_api_key)
 @cache
 def fetch_medrxiv_by_id(doi):
 
+    # Fix doi if not in appropriate format
+    # Remove https://doi.org/ if present
+    if doi.startswith("https://doi.org/"):
+        doi = doi.replace("https://doi.org/", "")
+    # Add 10.1101/ if not present
+    if not doi.startswith("10.1101/"):
+        doi = "10.1101/" + doi
+    # Remove version number if present
+    if 'v' in doi:
+        doi = doi.split('v')[0]
+    # Remove trailing dot if present
+    if doi.endswith('.'):
+        doi = doi[:-1]
+    # Remove space if present
+    if ' ' in doi:
+        doi = doi.replace(' ', '')
+
     # Define the base URL for the medRxiv API
     base_url = "https://api.medrxiv.org/details/medrxiv/"
 
