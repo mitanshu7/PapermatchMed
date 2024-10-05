@@ -5,7 +5,6 @@ import numpy as np
 import requests
 from mixedbread_ai.client import MixedbreadAI
 from dotenv import dotenv_values
-import re
 from functools import cache
 import pandas as pd
 
@@ -22,13 +21,11 @@ config = dotenv_values(".env")
 mxbai_api_key = config["MXBAI_API_KEY"]
 mxbai = MixedbreadAI(api_key=mxbai_api_key)
 
+
 ################################################################################
-
-# Function to search MedRiv by DOI
-@cache
-def fetch_medrxiv_by_id(doi):
-
-    # Fix doi if not in appropriate format
+# Fix doi if not in appropriate format
+def sanitise_doi(doi):
+    
     # Remove https://doi.org/ if present
     if doi.startswith("https://doi.org/"):
         doi = doi.replace("https://doi.org/", "")
@@ -44,6 +41,18 @@ def fetch_medrxiv_by_id(doi):
     # Remove space if present
     if ' ' in doi:
         doi = doi.replace(' ', '')
+    # Remove trailing slash if present
+    if doi.endswith('/'):
+        doi = doi[:-1]
+
+    return doi
+
+# Function to search MedRiv by DOI
+@cache
+def fetch_medrxiv_by_id(doi):
+
+    # Sanitise DOI
+    doi = sanitise_doi(doi)
 
     # Define the base URL for the medRxiv API
     base_url = "https://api.medrxiv.org/details/medrxiv/"
@@ -55,7 +64,7 @@ def fetch_medrxiv_by_id(doi):
     response = requests.get(url)
 
     # Check if the request was successful
-    if response.status_code == 200:
+    if response.status_code == 200 and response.json()['messages'][0]['status'] == 'ok':
         # Parse the JSON response
         data = response.json()
         # Extract the abstract from the response data
@@ -67,9 +76,8 @@ def fetch_medrxiv_by_id(doi):
             "URL": f"https://doi.org/{doi}"
         }
     else:
-        # Print an error message if the request was not successful
-        print(f"Error: {response.status_code}")
-        return None
+        # Raise an exception if the request was not successful
+        raise gr.Error( f"Failed to fetch metadata for DOI {doi}. {response.json()['messages'][0]['status']}")
 
 ################################################################################
 # Function to embed text
@@ -122,33 +130,18 @@ def fetch_all_details(search_results):
     return all_details
 
 ################################################################################
-@cache
-def make_clickable(val):
-        # Regex to detect URLs in the value
-        if re.match(r'^https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+', val):
-            return f"[{val}]({val})"
-        return val
-
-################################################################################
-
-# Function to convert list of dictionaries to a styled HTML table
-
-def parse_output(data):
-    
-    df = pd.DataFrame(data)
-
-    df['URL'] = df['URL'].apply(make_clickable)
-
-    return df
-
-################################################################################
 
 # Function to handle the UI logic
 @cache
 def predict(input_type, input_text, limit):
 
+########################################
     # When input is MedRxiv id
     if input_type == "MedRxiv DOI":
+
+        # Check if input is empty
+        if input_text == "":
+            raise gr.Error("Please enter a MedRxiv DOI", 10)
 
         # Search if id is already in database
         id_in_db = milvus_client.get(collection_name="medrxiv_abstracts",ids=[input_text])
@@ -173,26 +166,37 @@ def predict(input_type, input_text, limit):
         # Gather details about the found papers
         all_details = fetch_all_details(search_results)
         
+        # Convert to dataframe
+        df = pd.DataFrame(all_details)
 
-        df = parse_output(all_details)
-
-        return df
+        # Convert to HTML table and return
+        return df.to_html(render_links=True, index=False)
     
+########################################
     elif input_type == "Abstract or Description":
 
+        # Check if input is empty
+        if input_text == "":
+            raise gr.Error("Please enter an abstract or description", 10)
+
+        # Embed abstract
         abstract_vector = embed(input_text)
 
+        # Search database
         search_results = search(abstract_vector, limit)
 
+        # Gather details about the found papers
         all_details = fetch_all_details(search_results)
         
-        df = parse_output(all_details)
+        # Convert to dataframe
+        df = pd.DataFrame(all_details)
 
-        return df
+        # Convert to HTML table and return
+        return df.to_html(render_links=True, index=False)
 
+########################################
     else:
-        return "Please provide either an MedRxiv DOI or an abstract."
-            
+        return gr.Error("Please select an input type")
 
 contact_text = """
 # Contact Information
@@ -248,12 +252,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     submit_btn = gr.Button("Find Papers")
     
     # Output section
-    output = gr.DataFrame(
-        wrap=True, datatype=["str", "str", "str", "markdown", "number"], 
-        label="Related Papers", 
-        show_label=True,
-        headers=["Title", "Authors", "Abstract", "URL", "Similarity Score"]
-    )
+    output = gr.HTML(label="Related Papers")
 
     # Attribution
     gr.Markdown(contact_text)
