@@ -3,3 +3,6 @@ user.yaml
 volumes/
 *tmp*
 .env
+*dump*
+*.parquet
+*.zip
